@@ -36,7 +36,7 @@ type Event struct {
 	Labels      map[string]string
 }
 
-func (e *Event) Compare(other *Event) int {
+func (e *Event) compare(other *Event) int {
 
 	if e.Time.Before(other.Time) {
 		return 1

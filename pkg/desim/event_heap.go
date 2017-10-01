@@ -8,20 +8,20 @@ package desim
 // 	 Use of this source code is governed by a BSD-style
 // 	 license that can be found in the LICENSE file.
 
-func (h EventHeap) compare(a, b *Event) int { return a.Compare(b) }
+func (h eventHeap) compare(a, b *Event) int { return a.compare(b) }
 
-// EventHeap is a container of *Event, where the elements can be efficiently
+// eventHeap is a container of *Event, where the elements can be efficiently
 // retrieved in their decreasing order (according to their comparison
 // rules).
-type EventHeap struct {
+type eventHeap struct {
 	n  int
 	pq []*Event
 }
 
-// NewEventHeap creates a heap, optionaly with keys already populating
+// newEventHeap creates a heap, optionaly with keys already populating
 // it. The complexity is O(n) where n = len(keys).
-func NewEventHeap(keys ...*Event) *EventHeap {
-	h := &EventHeap{
+func newEventHeap(keys ...*Event) *eventHeap {
+	h := &eventHeap{
 		n:  len(keys),
 		pq: append(make([]*Event, 1), keys...),
 	}
@@ -30,18 +30,18 @@ func NewEventHeap(keys ...*Event) *EventHeap {
 }
 
 // Len is the number of elements stored in the heap.
-func (h *EventHeap) Len() int { return h.n }
+func (h *eventHeap) Len() int { return h.n }
 
 // Peek at the largest element (according to their comparison rules), without
 // removing it from the heap.
-func (h *EventHeap) Peek() *Event { return h.pq[1] }
+func (h *eventHeap) Peek() *Event { return h.pq[1] }
 
 // Fix re-establishes the heap ordering. This is useful if elements
 // of the heap have had their comparison value changed. It is equivalent to,
 // but less expenasive than, Pop'ing all the elements and Push'ing them
 // again.
 // The complexity is O(n).
-func (h *EventHeap) Fix() {
+func (h *eventHeap) Fix() {
 	for i := (h.n) / 2; i > 0; i-- {
 		h.sink(i, h.n)
 	}
@@ -49,7 +49,7 @@ func (h *EventHeap) Fix() {
 
 // Push pushes the element k onto the heap. The complexity is
 // O(log(n)) where n == h.Len().
-func (h *EventHeap) Push(k *Event) {
+func (h *eventHeap) Push(k *Event) {
 	h.n++
 	h.pq = append(h.pq, k)
 	h.swim(h.n)
@@ -57,7 +57,7 @@ func (h *EventHeap) Push(k *Event) {
 
 // Pop removes the largest element (according to their comparison rules) from
 // the heap and returns it. The complexity is O(log(n)) where n == h.Len().
-func (h *EventHeap) Pop() *Event {
+func (h *eventHeap) Pop() *Event {
 	val := h.pq[1]
 	h.swap(1, h.n)
 	h.pq = h.pq[:h.n]
@@ -70,7 +70,7 @@ func (h *EventHeap) Pop() *Event {
 // Remove removes k from the heap, if it exists. Equality is defined by
 // Compare == 0.
 // The complexity is O(n+log(n)) where n == h.Len().
-func (h *EventHeap) Remove(k *Event) bool {
+func (h *eventHeap) Remove(k *Event) bool {
 
 	cmp := h.compare(h.pq[1], k)
 	if cmp == 0 {
@@ -97,17 +97,17 @@ func (h *EventHeap) Remove(k *Event) bool {
 	return false
 }
 
-func (h *EventHeap) swap(i, j int)      { h.pq[i], h.pq[j] = h.pq[j], h.pq[i] }
-func (h *EventHeap) less(i, j int) bool { return h.compare(h.pq[i], h.pq[j]) < 0 }
+func (h *eventHeap) swap(i, j int)      { h.pq[i], h.pq[j] = h.pq[j], h.pq[i] }
+func (h *eventHeap) less(i, j int) bool { return h.compare(h.pq[i], h.pq[j]) < 0 }
 
-func (h *EventHeap) swim(k int) {
+func (h *eventHeap) swim(k int) {
 	for k > 1 && h.less(k/2, k) {
 		h.swap(k/2, k)
 		k = k / 2
 	}
 }
 
-func (h *EventHeap) sink(k, n int) {
+func (h *eventHeap) sink(k, n int) {
 
 	for k*2 <= n {
 		j := 2 * k
@@ -121,4 +121,3 @@ func (h *EventHeap) sink(k, n int) {
 		k = j
 	}
 }
-

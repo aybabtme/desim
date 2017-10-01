@@ -25,7 +25,7 @@ type localScheduler struct {
 
 func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 
-	eventHeap := NewEventHeap()
+	eventHeap := newEventHeap()
 
 	pendingResponse := make(map[int]*chanReq)
 

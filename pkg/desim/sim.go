@@ -1,3 +1,4 @@
+// Package desim allows one to quickly create actor-based discrete event simulations.
 package desim
 
 import (

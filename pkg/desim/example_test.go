@@ -124,12 +124,8 @@ func TestRunSim(t *testing.T) {
 		desim.LogMute(),
 	)
 
-	sort.Slice(want, func(i, j int) bool { return want[i].Compare(want[j]) < 1 })
-	sort.Slice(got, func(i, j int) bool { return got[i].Compare(got[j]) < 1 })
-
-	// for _, g := range got {
-	// 	fmt.Printf("%#v\n", g)
-	// }
+	sort.Slice(want, func(i, j int) bool { return want[i].Time.Before(want[j].Time) })
+	sort.Slice(got, func(i, j int) bool { return got[i].Time.Before(got[j].Time) })
 
 	require.Equal(t, want, got)
 }
