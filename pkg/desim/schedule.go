@@ -25,6 +25,7 @@ type Request struct {
 type Response struct {
 	Now         time.Time
 	Interrupted bool
+	Done        bool
 }
 
 type Event struct {

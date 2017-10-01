@@ -3,6 +3,7 @@ package desim_test
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"sort"
 	"testing"
@@ -56,6 +57,42 @@ func ExampleNew() {
 	// 1970-01-01 00:00:05 +0000 UTC: slow
 	// 1970-01-01 00:00:06 +0000 UTC: slow
 	// 1970-01-01 00:00:06 +0000 UTC: slow
+}
+
+func ExampleNewByTime() {
+	var (
+		r     = rand.New(rand.NewSource(42))
+		begin = time.Unix(0, 0).UTC()
+		end   = begin.Add(24 * time.Hour)
+	)
+
+	sim := desim.New(
+		desim.NewLocalScheduler,
+		r,
+		gen.StaticTime(begin),
+		gen.StaticTime(end),
+	)
+
+	slowActor := desim.MakeActor("slow", infiniteclock(1*time.Second))
+	fastActor := desim.MakeActor("fast", infiniteclock(500*time.Millisecond))
+
+	start := time.Now()
+	evs := sim.Run(
+		[]*desim.Actor{
+			slowActor,
+			fastActor,
+		},
+		desim.LogMute(),
+		// desim.LogPretty(ioutil.Discard),
+		// desim.LogJSON(ioutil.Discard),
+	)
+	duration := time.Since(start)
+	speedup := float64(end.Sub(begin)) / float64(duration)
+	eventsRate := float64(len(evs)) / duration.Seconds()
+	log.Printf("simulated %v (%d events) in %v - %.1fx factor, %.1f events/s", end.Sub(begin), len(evs), duration, speedup, eventsRate)
+
+	// Output:
+	//
 }
 
 func TestRunSim(t *testing.T) {
@@ -141,5 +178,13 @@ func clock(iter int, dur time.Duration) desim.Action {
 			return false
 		}
 		return iter > 0
+	}
+}
+
+func infiniteclock(dur time.Duration) desim.Action {
+	pdur := gen.StaticDuration(dur)
+	return func(env desim.Env) bool {
+		env.Log().Event("woke up, about to sleep")
+		return !env.Sleep(pdur)
 	}
 }

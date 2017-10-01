@@ -25,15 +25,24 @@ type localScheduler struct {
 
 func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 
-	eventHeap := newEventHeap()
-
-	pendingResponse := make(map[int]*chanReq)
-
-	actorsRunning := schd.actorCount
-
-	currentTime := start
-
-	eventID := 0
+	var (
+		eventHeap       = newEventHeap()
+		pendingResponse = make(map[int]*chanReq)
+		actorsRunning   = schd.actorCount
+		currentTime     = start
+		eventID         = 0
+	)
+	defer func() {
+		for _, pending := range pendingResponse {
+			select {
+			case pending.res <- &chanRes{res: &Response{
+				Now:  currentTime,
+				Done: true,
+			}}:
+			default:
+			}
+		}
+	}()
 
 	recvEvent := func(envelope *chanReq) {
 		req := envelope.req

@@ -144,5 +144,13 @@ func (env *env) send(d gen.Duration, sig Signal) *Response {
 		Labels:  map[string]string{"name": env.actorName},
 	})
 	env.now = resp.Now
+	if resp.Done {
+		if !env.stopped {
+			env.stopped = resp.Done
+		}
+		if !env.aborted {
+			env.aborted = resp.Done
+		}
+	}
 	return resp
 }

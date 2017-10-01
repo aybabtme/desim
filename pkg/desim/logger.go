@@ -1,8 +1,9 @@
 package desim
 
 import (
-	"fmt"
+	"bytes"
 	"io"
+	"strconv"
 	"sync"
 )
 
@@ -12,37 +13,63 @@ func LogMute() Logger { return mutelog }
 
 func LogJSON(w io.Writer) Logger {
 	var mu sync.Mutex
+	bufpool := sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 1<<10))
+		},
+	}
+
 	return &kvlogger{
 		encoder: func(keys, values []string) {
-			mu.Lock()
-			defer mu.Unlock()
-			fmt.Fprint(w, "{")
+			buf := bufpool.Get().(*bytes.Buffer)
+
+			buf.WriteRune('{')
 			for i, k := range keys {
 				if i != 0 {
-					fmt.Fprint(w, ",")
+					buf.WriteRune(',')
 				}
 				v := values[i]
-				fmt.Fprintf(w, "%q:%q", k, v)
+				buf.WriteString(strconv.Quote(k))
+				buf.WriteRune(':')
+				buf.WriteString(strconv.Quote(v))
 			}
-			fmt.Fprint(w, "}\n")
+			buf.WriteString("}\n")
+			mu.Lock()
+			io.Copy(w, buf)
+			mu.Unlock()
+			buf.Reset()
+			bufpool.Put(buf)
 		},
 	}
 }
 
 func LogPretty(w io.Writer) Logger {
 	var mu sync.Mutex
+	bufpool := sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 1<<10))
+		},
+	}
 	return &kvlogger{
 		encoder: func(keys, values []string) {
-			mu.Lock()
-			defer mu.Unlock()
+			buf := bufpool.Get().(*bytes.Buffer)
+
 			for i, k := range keys {
 				if i != 0 {
-					fmt.Fprint(w, "\t")
+					buf.WriteString("\t")
 				}
 				v := values[i]
-				fmt.Fprintf(w, "%s=%q", k, v)
+				buf.WriteString(k)
+				buf.WriteRune('=')
+				buf.WriteString(strconv.Quote(v))
 			}
-			fmt.Fprint(w, "\n")
+			buf.WriteRune('\n')
+
+			mu.Lock()
+			io.Copy(w, buf)
+			mu.Unlock()
+			buf.Reset()
+			bufpool.Put(buf)
 		},
 	}
 }
