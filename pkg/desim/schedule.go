@@ -7,7 +7,7 @@ import (
 )
 
 type Scheduler interface {
-	Run(r *rand.Rand, start, end time.Time)
+	Run(r *rand.Rand, start, end time.Time) []*Event
 }
 
 type SchedulerClient interface {
@@ -15,10 +15,11 @@ type SchedulerClient interface {
 }
 
 type Request struct {
-	Delay      time.Duration
-	Priority   int32
-	Signals    Signal
-	TieBreaker func(*rand.Rand) int32
+	Delay       time.Duration
+	Priority    int32
+	Signals     Signal
+	TieBreakers [4]int32
+	Labels      map[string]string
 }
 
 type Response struct {
@@ -27,11 +28,12 @@ type Response struct {
 }
 
 type Event struct {
-	ID         int
-	Time       time.Time
-	Priority   int32
-	Signals    Signal
-	TieBreaker func() int32
+	ID          int
+	Time        time.Time
+	Priority    int32
+	Signals     Signal
+	TieBreakers [4]int32
+	Labels      map[string]string
 }
 
 func (e *Event) Compare(other *Event) int {
@@ -49,18 +51,16 @@ func (e *Event) Compare(other *Event) int {
 		return -1
 	}
 
-	// same time and priority, use tie breaker
-
-	for i := 0; i < 100; i++ {
-		self := e.TieBreaker()
-		other := other.TieBreaker()
-		if self > other {
+	// same time and priority, use tie breakers
+	for i, eBreaker := range e.TieBreakers {
+		oBreaker := other.TieBreakers[i]
+		if eBreaker > oBreaker {
 			return 1
-		}
-		if other > self {
+		} else if eBreaker < oBreaker {
 			return -1
 		}
 	}
+
 	panic(fmt.Sprintf(`can't resolve tie between two events, are they duplicates?
         self = %#v
         other= %#v`,

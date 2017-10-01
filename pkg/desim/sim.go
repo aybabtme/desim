@@ -12,7 +12,7 @@ import (
 type SchedulerFn func(actorCount int) (Scheduler, SchedulerClient)
 
 type Simulation interface {
-	Run([]*Actor, Logger)
+	Run([]*Actor, Logger) []*Event
 }
 
 type Actor struct {
@@ -58,7 +58,7 @@ type sim struct {
 	start, end gen.Time
 }
 
-func (sim *sim) Run(actors []*Actor, actorlog Logger) {
+func (sim *sim) Run(actors []*Actor, actorlog Logger) []*Event {
 
 	var (
 		r     = rand.New(rand.NewSource(sim.r.Int63()))
@@ -70,33 +70,26 @@ func (sim *sim) Run(actors []*Actor, actorlog Logger) {
 	var wg sync.WaitGroup
 	for id, actor := range actors {
 		wg.Add(1)
-		env := makeEnv(r.Int63(), start, client, actorlog.KV("actor", actor.name))
+		env := makeEnv(r.Int63(), start, client, actorlog.KV("actor", actor.name), actor.name)
 		go func(id int, env Env, actor *Actor) {
-			log.Printf("%d: actor starting: %q", id, actor.name)
-
-			actionCount := 0
-			defer func() { log.Printf("%d: actor stopping: %q performed %d actions", id, actor.name, actionCount) }()
-
 			defer wg.Done()
 			for env.IsRunning() {
-				actionCount++
 				if !actor.action(env) {
-					log.Printf("%d: actor purposefully stopped", id)
 					env.Done(gen.StaticDuration(0))
 					return
 				}
 			}
-			log.Printf("%d: environment was aborted", id)
 		}(id, env, actor)
 	}
 
-	schd.Run(r, start, end)
+	history := schd.Run(r, start, end)
 	wg.Wait()
+	return history
 }
 
-func makeEnv(seed int64, now time.Time, schd SchedulerClient, log Logger) *env {
+func makeEnv(seed int64, now time.Time, schd SchedulerClient, log Logger, actorName string) *env {
 	r := rand.New(rand.NewSource(seed))
-	return &env{r: r, now: now, schd: schd, log: log, aborted: false}
+	return &env{r: r, now: now, schd: schd, log: log, actorName: actorName, aborted: false, stopped: false}
 }
 
 var _ Env = (*env)(nil)
@@ -106,6 +99,8 @@ type env struct {
 	now  time.Time
 	schd SchedulerClient
 	log  Logger
+
+	actorName string
 
 	aborted bool
 	stopped bool
@@ -132,13 +127,20 @@ func (env *env) Done(d gen.Duration) {
 }
 
 func (env *env) send(d gen.Duration, sig Signal) *Response {
+	if D {
+		log.Printf("%q: sending an event", env.actorName)
+	}
 	resp := env.schd.Schedule(&Request{
 		Delay:    d.Gen(),
 		Priority: 0,
-		TieBreaker: func(r *rand.Rand) int32 {
-			return r.Int31()
+		TieBreakers: [4]int32{
+			env.r.Int31(),
+			env.r.Int31(),
+			env.r.Int31(),
+			env.r.Int31(),
 		},
 		Signals: sig,
+		Labels:  map[string]string{"name": env.actorName},
 	})
 	env.now = resp.Now
 	return resp
