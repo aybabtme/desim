@@ -73,8 +73,10 @@ func ExampleNewByTime() {
 		gen.StaticTime(end),
 	)
 
-	slowActor := desim.MakeActor("slow", infiniteclock(1*time.Second))
-	fastActor := desim.MakeActor("fast", infiniteclock(500*time.Millisecond))
+	// slowActor := desim.MakeActor("slow", infiniteclock(1*time.Second))
+	// fastActor := desim.MakeActor("fast", infiniteclock(500*time.Millisecond))
+	slowActor := desim.MakeActor("slow", randomRateClock(r.Int63(), 1*time.Second))
+	fastActor := desim.MakeActor("fast", randomRateClock(r.Int63(), 500*time.Millisecond))
 
 	start := time.Now()
 	evs := sim.Run(
@@ -183,6 +185,15 @@ func clock(iter int, dur time.Duration) desim.Action {
 
 func infiniteclock(dur time.Duration) desim.Action {
 	pdur := gen.StaticDuration(dur)
+	return func(env desim.Env) bool {
+		env.Log().Event("woke up, about to sleep")
+		return !env.Sleep(pdur)
+	}
+}
+
+func randomRateClock(seed int64, avgRate time.Duration) desim.Action {
+	r := rand.New(rand.NewSource(seed))
+	pdur := gen.ExpDuration(r, avgRate)
 	return func(env desim.Env) bool {
 		env.Log().Event("woke up, about to sleep")
 		return !env.Sleep(pdur)

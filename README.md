@@ -63,6 +63,19 @@ history := sim.Run(
 
 Where `history` represents what events were scheduled, and `desim.LogJSON` records what the actors have emitted during that time (in our case, that goes to `/dev/null`).
 
+## performance
+
+Simulations happen in simulated times: time goes as fast as possible. The speed at which the simulation runs grows linearly with the number of events happening over time.
+
+For instance, if we simulate 1 hour worth of N actors performing events every 500ms, we see that the time it takes to simulate this hour is linear with the number of actors involved (and thus, with the frequency of events).
+
+![Time to simulate 1h worth of events](pkg/desim/time_to_simulate_by_actor_count.png)
+
+Similary, if we have a single actor simulation, but with the actor performing events at a fixed frequency, we see that this linear relation holds:
+
+![Time to simulate 1h worth of events](pkg/desim/time_to_simulate_by_frequency.png)
+
+
 ## license
 
 MIT license
