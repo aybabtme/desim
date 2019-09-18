@@ -160,6 +160,57 @@ func ExampleResourceSharing() {
 	// 1970-01-01 00:00:00.5 +0000 UTC: racer1 - acquired resource after waiting
 }
 
+func ExampleResourceTimeout() {
+	var (
+		r     = rand.New(rand.NewSource(42))
+		start = time.Unix(0, 0).UTC()
+		end   = start.Add(100 * time.Millisecond)
+	)
+
+	sim := desim.New(
+		desim.NewLocalScheduler,
+		r,
+		gen.StaticTime(start),
+		gen.StaticTime(end),
+	)
+
+	mutex := desim.MakeFIFOResource("mutex", 1)
+
+	raceForMutex := func(env desim.Env) bool {
+		release, timedout := env.Acquire(mutex, gen.StaticDuration(50*time.Millisecond))
+		if !timedout {
+			env.Log().Event("timed out waiting for mutex")
+			return false
+		}
+		env.Sleep(gen.StaticDuration(100 * time.Millisecond))
+		release()
+		return false
+	}
+
+	racer1 := desim.MakeActor("racer1", raceForMutex)
+	racer2 := desim.MakeActor("racer2", raceForMutex)
+
+	evs := sim.Run(
+		[]*desim.Actor{
+			racer1,
+			racer2,
+		},
+		[]desim.Resource{mutex},
+		desim.LogJSON(ioutil.Discard),
+	)
+	for _, ev := range evs {
+		fmt.Printf("%v: %v - %s\n", ev.Time, ev.Labels["name"], ev.Kind)
+	}
+
+	// Output:
+	// 1970-01-01 00:00:00 +0000 UTC: racer2 - acquired resource immediately
+	// 1970-01-01 00:00:00.05 +0000 UTC: racer1 - timed out waiting for resource
+	// 1970-01-01 00:00:00.05 +0000 UTC: racer1 - actor is done
+	// 1970-01-01 00:00:00.1 +0000 UTC: racer2 - waited a delay
+	// 1970-01-01 00:00:00.1 +0000 UTC: racer2 - released resource
+	// 1970-01-01 00:00:00.1 +0000 UTC: racer2 - actor is done
+}
+
 func TestRunSim(t *testing.T) {
 	var (
 		r     = rand.New(rand.NewSource(42))

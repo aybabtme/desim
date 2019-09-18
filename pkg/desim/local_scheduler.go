@@ -67,6 +67,21 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 		reqType := req.Type
 		actor := req.Actor
 		switch {
+		case reqType.Done != nil:
+			// schedule an immediate "done" event
+			eventID++
+			ev := &Event{
+				Actor:       actor,
+				ID:          eventID,
+				Priority:    req.Priority,
+				Time:        currentTime,
+				TieBreakers: req.TieBreakers,
+				Signals:     req.Signals.Set(SignalActorDone),
+				Labels:      req.Labels,
+				Kind:        "actor is done",
+			}
+			eventHeap.Push(ev)
+			pendingResponse[ev.ID] = envelope
 		case reqType.Delay != nil:
 			// simply schedule an event to wake up
 			eventID++
@@ -226,6 +241,7 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 		currentTime = nextEvent.Time // advance time
 
 		if nextEvent.Signals.Has(SignalActorDone) {
+			delete(actorsWaitingForService, nextEvent.Actor)
 			actorsRunning--
 		}
 

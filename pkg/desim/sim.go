@@ -140,7 +140,7 @@ func (env *env) Abort(d gen.Duration) {
 func (env *env) Done(d gen.Duration) {
 	env.stopped = true
 	_ = env.send(SignalActorDone, &RequestType{
-		Delay: &RequestDelay{Delay: d.Gen()},
+		Done: &RequestDone{},
 	})
 }
 

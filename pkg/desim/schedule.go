@@ -25,10 +25,13 @@ type Request struct {
 
 type RequestType struct {
 	// oneof
+	Done            *RequestDone
 	Delay           *RequestDelay
 	AcquireResource *RequestAcquireResource
 	ReleaseResource *RequestReleaseResource
 }
+
+type RequestDone struct{}
 
 type RequestDelay struct {
 	Delay time.Duration
