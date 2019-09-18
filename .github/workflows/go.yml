@@ -1,5 +1,5 @@
 name: Go
-on: [push,pull_request]
+on: [push]
 jobs:
   test:
     name: Test
@@ -16,4 +16,4 @@ jobs:
       uses: actions/checkout@v1
 
     - name: Test
-      run: go test -short ./...
+      run: go test -mod=vendor -short ./...
