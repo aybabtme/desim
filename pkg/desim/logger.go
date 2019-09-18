@@ -15,14 +15,14 @@ func LogJSON(w io.Writer) Logger {
 	var mu sync.Mutex
 	bufpool := sync.Pool{
 		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, 1<<10))
+			return bytes.NewBuffer(make([]byte, 0, 1<<10))
 		},
 	}
 
 	return &kvlogger{
 		encoder: func(keys, values []string) {
 			buf := bufpool.Get().(*bytes.Buffer)
-
+			buf.Reset()
 			buf.WriteRune('{')
 			for i, k := range keys {
 				if i != 0 {
@@ -37,7 +37,6 @@ func LogJSON(w io.Writer) Logger {
 			mu.Lock()
 			io.Copy(w, buf)
 			mu.Unlock()
-			buf.Reset()
 			bufpool.Put(buf)
 		},
 	}
@@ -47,13 +46,13 @@ func LogPretty(w io.Writer) Logger {
 	var mu sync.Mutex
 	bufpool := sync.Pool{
 		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, 1<<10))
+			return bytes.NewBuffer(make([]byte, 0, 1<<10))
 		},
 	}
 	return &kvlogger{
 		encoder: func(keys, values []string) {
 			buf := bufpool.Get().(*bytes.Buffer)
-
+			buf.Reset()
 			for i, k := range keys {
 				if i != 0 {
 					buf.WriteString("\t")
@@ -68,7 +67,6 @@ func LogPretty(w io.Writer) Logger {
 			mu.Lock()
 			io.Copy(w, buf)
 			mu.Unlock()
-			buf.Reset()
 			bufpool.Put(buf)
 		},
 	}
