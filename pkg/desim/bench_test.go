@@ -13,6 +13,10 @@ import (
 )
 
 func BenchmarkRun(b *testing.B) {
+	if testing.Short() {
+		b.Skip()
+	}
+
 	actors := []*desim.Actor{
 		desim.MakeActor("fast", infiniteclock(500*time.Millisecond)),
 		// desim.MakeActor("fast2", infiniteclock(300*time.Millisecond)),
@@ -25,6 +29,10 @@ func BenchmarkRun(b *testing.B) {
 }
 
 func doBenchmark(b *testing.B, maxHistory time.Duration, actors []*desim.Actor) {
+	if testing.Short() {
+		b.Skip()
+	}
+
 	var (
 		r     = rand.New(rand.NewSource(42))
 		begin = time.Unix(0, 0).UTC()
@@ -54,6 +62,9 @@ func doBenchmark(b *testing.B, maxHistory time.Duration, actors []*desim.Actor) 
 }
 
 func TestGenerateTimeComplexityByActor(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
 
 	maxHistory := 1 * time.Minute
 	frequency := 500 * time.Millisecond
@@ -108,6 +119,9 @@ func TestGenerateTimeComplexityByActor(t *testing.T) {
 }
 
 func TestGenerateTimeComplexityByEventFrequency(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
 
 	maxHistory := 1 * time.Minute
 	var (

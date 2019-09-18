@@ -80,6 +80,12 @@ func (e *Event) compare(other *Event) int {
 	if e.Priority < other.Priority {
 		return -1
 	}
+	if e.Actor < other.Actor {
+		return 1
+	}
+	if e.Actor > e.Actor {
+		return -1
+	}
 	if e.ID < other.ID {
 		return 1
 	}
