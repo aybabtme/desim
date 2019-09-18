@@ -10,10 +10,10 @@ import (
 	"github.com/aybabtme/desim/pkg/gen"
 )
 
-type SchedulerFn func(actorCount int) (Scheduler, SchedulerClient)
+type SchedulerFn func(actorCount int, res []Resource) (Scheduler, SchedulerClient)
 
 type Simulation interface {
-	Run([]*Actor, Logger) []*Event
+	Run([]*Actor, []Resource, Logger) []*Event
 }
 
 type Actor struct {
@@ -40,6 +40,8 @@ type Env interface {
 	Abort(gen.Duration)
 	Done(gen.Duration)
 
+	Acquire(res Resource, timeout gen.Duration) (release func(), reserved bool)
+
 	Log() Logger
 }
 
@@ -59,14 +61,14 @@ type sim struct {
 	start, end gen.Time
 }
 
-func (sim *sim) Run(actors []*Actor, actorlog Logger) []*Event {
+func (sim *sim) Run(actors []*Actor, resources []Resource, actorlog Logger) []*Event {
 
 	var (
 		r     = rand.New(rand.NewSource(sim.r.Int63()))
 		start = sim.start.Gen()
 		end   = sim.end.Gen()
 	)
-	schd, client := sim.mkSchd(len(actors))
+	schd, client := sim.mkSchd(len(actors), resources)
 
 	var wg sync.WaitGroup
 	for id, actor := range actors {
@@ -74,6 +76,15 @@ func (sim *sim) Run(actors []*Actor, actorlog Logger) []*Event {
 		env := makeEnv(r.Int63(), start, client, actorlog.KV("actor", actor.name), actor.name)
 		go func(id int, env Env, actor *Actor) {
 			defer wg.Done()
+			defer func() {
+				if e := recover(); e != nil {
+					if e == stopAllActors {
+						// the simulation stopped
+						return
+					}
+					panic(e)
+				}
+			}()
 			for env.IsRunning() {
 				if !actor.action(env) {
 					env.Done(gen.StaticDuration(0))
@@ -113,26 +124,56 @@ func (env *env) Log() Logger      { return env.log.KV("time", env.now.Format(tim
 func (env *env) IsRunning() bool  { return !env.aborted || !env.stopped }
 
 func (env *env) Sleep(d gen.Duration) (interrupted bool) {
-	resp := env.send(d, 0)
+	resp := env.send(0, &RequestType{
+		Delay: &RequestDelay{Delay: d.Gen()},
+	})
 	return resp.Interrupted
 }
 
 func (env *env) Abort(d gen.Duration) {
 	env.aborted = true
-	_ = env.send(d, SignalAbort)
+	_ = env.send(SignalAbort, &RequestType{
+		Delay: &RequestDelay{Delay: d.Gen()},
+	})
 }
 
 func (env *env) Done(d gen.Duration) {
 	env.stopped = true
-	_ = env.send(d, SignalActorDone)
+	_ = env.send(SignalActorDone, &RequestType{
+		Done: &RequestDone{},
+	})
 }
 
-func (env *env) send(d gen.Duration, sig Signal) *Response {
+func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), reserved bool) {
+	resp := env.send(0, &RequestType{
+		AcquireResource: &RequestAcquireResource{
+			ResourceID: res.id(),
+			Timeout:    timeout.Gen(),
+		},
+	})
+	if resp.Timedout {
+		return nil, false
+	}
+	releaseFn := func() {
+		_ = env.send(0, &RequestType{
+			ReleaseResource: &RequestReleaseResource{
+				ResourceID: res.id(),
+			},
+		})
+	}
+
+	return releaseFn, true
+}
+
+var stopAllActors = struct{}{}
+
+func (env *env) send(sig Signal, reqType *RequestType) *Response {
 	if D {
 		log.Printf("%q: sending an event", env.actorName)
 	}
 	resp := env.schd.Schedule(&Request{
-		Delay:    d.Gen(),
+		Actor:    env.actorName,
+		Type:     reqType,
 		Priority: 0,
 		TieBreakers: [4]int32{
 			env.r.Int31(),
@@ -151,6 +192,7 @@ func (env *env) send(d gen.Duration, sig Signal) *Response {
 		if !env.aborted {
 			env.aborted = resp.Done
 		}
+		panic(stopAllActors)
 	}
 	return resp
 }
