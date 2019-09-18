@@ -15,30 +15,56 @@ type SchedulerClient interface {
 }
 
 type Request struct {
-	Delay       time.Duration
+	Actor       string
 	Priority    int32
 	Signals     Signal
 	TieBreakers [4]int32
 	Labels      map[string]string
+	Type        *RequestType
+}
+
+type RequestType struct {
+	// oneof
+	Delay           *RequestDelay
+	AcquireResource *RequestAcquireResource
+	ReleaseResource *RequestReleaseResource
+}
+
+type RequestDelay struct {
+	Delay time.Duration
+}
+
+type RequestAcquireResource struct {
+	ResourceID string
+	Timeout    time.Duration
+}
+
+type RequestReleaseResource struct {
+	ResourceID string
 }
 
 type Response struct {
 	Now         time.Time
 	Interrupted bool
+	Timedout    bool
 	Done        bool
 }
 
 type Event struct {
+	Actor       string
 	ID          int
 	Time        time.Time
 	Priority    int32
 	Signals     Signal
 	TieBreakers [4]int32
 	Labels      map[string]string
+
+	Kind        string
+	Interrupted bool
+	Timedout    bool
 }
 
 func (e *Event) compare(other *Event) int {
-
 	if e.Time.Before(other.Time) {
 		return 1
 	}
@@ -51,6 +77,12 @@ func (e *Event) compare(other *Event) int {
 	if e.Priority < other.Priority {
 		return -1
 	}
+	if e.ID < other.ID {
+		return 1
+	}
+	if e.ID > other.ID {
+		return -1
+	}
 
 	// same time and priority, use tie breakers
 	for i, eBreaker := range e.TieBreakers {
@@ -60,6 +92,10 @@ func (e *Event) compare(other *Event) int {
 		} else if eBreaker < oBreaker {
 			return -1
 		}
+	}
+
+	if e.ID == other.ID {
+		return 0
 	}
 
 	panic(fmt.Sprintf(`can't resolve tie between two events, are they duplicates?

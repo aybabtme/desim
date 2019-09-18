@@ -41,6 +41,7 @@ func doBenchmark(b *testing.B, maxHistory time.Duration, actors []*desim.Actor) 
 	start := time.Now()
 	evs := sim.Run(
 		actors,
+		nil,
 		desim.LogMute(),
 	)
 
@@ -85,7 +86,7 @@ func TestGenerateTimeComplexityByActor(t *testing.T) {
 
 				each.Before(i)
 
-				_ = sim.Run(actors, desim.LogMute())
+				_ = sim.Run(actors, nil, desim.LogMute())
 
 				each.After(i)
 			}
@@ -138,7 +139,7 @@ func TestGenerateTimeComplexityByEventFrequency(t *testing.T) {
 
 				each.Before(i)
 
-				_ = sim.Run(actors, desim.LogMute())
+				_ = sim.Run(actors, nil, desim.LogMute())
 
 				each.After(i)
 			}
