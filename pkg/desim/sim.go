@@ -40,7 +40,8 @@ type Env interface {
 	Abort(gen.Duration)
 	Done(gen.Duration)
 
-	Acquire(res Resource, timeout gen.Duration) (release func(), reserved bool)
+	Acquire(res Resource, timeout gen.Duration) (release func(), obtained bool)
+	UseAsync(res Resource, duration, timeout gen.Duration) (obtained bool)
 
 	Log() Logger
 }
@@ -144,7 +145,7 @@ func (env *env) Done(d gen.Duration) {
 	})
 }
 
-func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), reserved bool) {
+func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), obtained bool) {
 	resp := env.send(0, &RequestType{
 		AcquireResource: &RequestAcquireResource{
 			ResourceID: res.id(),
@@ -163,6 +164,21 @@ func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), res
 	}
 
 	return releaseFn, true
+}
+
+func (env *env) UseAsync(res Resource, duration, timeout gen.Duration) (obtained bool) {
+	resp := env.send(0, &RequestType{
+		UseResource: &RequestUseResource{
+			ResourceID: res.id(),
+			Duration:   duration.Gen(),
+			Timeout:    timeout.Gen(),
+		},
+	})
+	if resp.Timedout {
+		return false
+	}
+
+	return true
 }
 
 var stopAllActors = struct{}{}

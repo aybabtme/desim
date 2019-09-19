@@ -29,6 +29,7 @@ type RequestType struct {
 	Delay           *RequestDelay
 	AcquireResource *RequestAcquireResource
 	ReleaseResource *RequestReleaseResource
+	UseResource     *RequestUseResource
 }
 
 type RequestDone struct{}
@@ -44,6 +45,12 @@ type RequestAcquireResource struct {
 
 type RequestReleaseResource struct {
 	ResourceID string
+}
+
+type RequestUseResource struct {
+	ResourceID string
+	Duration   time.Duration
+	Timeout    time.Duration
 }
 
 type Response struct {
@@ -65,6 +72,8 @@ type Event struct {
 	Kind        string
 	Interrupted bool
 	Timedout    bool
+
+	onHandle func()
 }
 
 func (e *Event) compare(other *Event) int {
