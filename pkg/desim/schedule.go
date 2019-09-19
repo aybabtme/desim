@@ -46,7 +46,8 @@ type RequestAcquireResource struct {
 }
 
 type RequestReleaseResource struct {
-	ResourceID string
+	ResourceID     string
+	ReservationKey string
 }
 
 type Response struct {
@@ -54,6 +55,8 @@ type Response struct {
 	Interrupted bool
 	Timedout    bool
 	Done        bool
+
+	ReservationKey string
 }
 
 type Event struct {
@@ -68,6 +71,8 @@ type Event struct {
 	Kind        string
 	Interrupted bool
 	Timedout    bool
+	// TODO: these need to be some kind of return value
+	ReservationKey string
 
 	onHandle func()
 }
