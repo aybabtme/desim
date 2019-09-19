@@ -13,15 +13,24 @@ var (
 	_ SchedulerClient = (*localScheduler)(nil)
 )
 
+type waitingRequest struct {
+	envelope *chanReq
+	timeout  *Event
+	async    bool
+}
+
 func NewLocalScheduler(actorCount int, resources []Resource) (Scheduler, SchedulerClient) {
 	res := make(map[string]Resource)
 	for _, r := range resources {
 		res[r.id()] = r
 	}
 	schd := &localScheduler{
-		actorCount: actorCount,
-		resources:  res,
-		queue:      make(chan *chanReq, actorCount),
+		actorCount:              actorCount,
+		resources:               res,
+		queue:                   make(chan *chanReq, actorCount),
+		eventHeap:               newEventHeap(),
+		pendingResponse:         make(map[int]*chanReq),
+		actorsWaitingForService: make(map[string]*waitingRequest),
 	}
 	return schd, schd
 }
@@ -30,31 +39,37 @@ type localScheduler struct {
 	actorCount int
 	resources  map[string]Resource
 	queue      chan *chanReq
+
+	currentTime             time.Time
+	eventID                 int
+	eventHeap               *eventHeap
+	pendingResponse         map[int]*chanReq
+	actorsWaitingForService map[string]*waitingRequest
 }
 
-type waitingRequest struct {
-	envelope *chanReq
-	timeout  *Event
+func (schd *localScheduler) Schedule(req *Request) *Response {
+	envelope := &chanReq{
+		req: req,
+		res: make(chan *chanRes),
+	}
+	schd.queue <- envelope
+	res := <-envelope.res
+	return res.res
 }
 
 func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
+	schd.currentTime = start
 
 	var (
-		eventHeap       = newEventHeap()
-		pendingResponse = make(map[int]*chanReq)
 		// requests that are waiting for some condition to occur
 		// before being scheduled in the future
-		actorsWaitingForService = make(map[string]*waitingRequest)
-		actorsRunning           = schd.actorCount
-		resources               = schd.resources
-		currentTime             = start
-		eventID                 = 0
+		actorsRunning = schd.actorCount
 	)
 	defer func() {
-		for _, pending := range pendingResponse {
+		for _, pending := range schd.pendingResponse {
 			select {
 			case pending.res <- &chanRes{res: &Response{
-				Now:  currentTime,
+				Now:  schd.currentTime,
 				Done: true,
 			}}:
 			default:
@@ -65,137 +80,15 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 	recvRequest := func(envelope *chanReq) {
 		req := envelope.req
 		reqType := req.Type
-		actor := req.Actor
 		switch {
 		case reqType.Done != nil:
-			// schedule an immediate "done" event
-			eventID++
-			ev := &Event{
-				Actor:       actor,
-				ID:          eventID,
-				Priority:    req.Priority,
-				Time:        currentTime,
-				TieBreakers: req.TieBreakers,
-				Signals:     req.Signals.Set(SignalActorDone),
-				Labels:      req.Labels,
-				Kind:        "actor is done",
-			}
-			eventHeap.Push(ev)
-			pendingResponse[ev.ID] = envelope
+			schd.handleRequestTypeDone(envelope)
 		case reqType.Delay != nil:
-			// simply schedule an event to wake up
-			eventID++
-			ev := &Event{
-				Actor:       actor,
-				ID:          eventID,
-				Priority:    req.Priority,
-				Time:        currentTime.Add(reqType.Delay.Delay),
-				TieBreakers: req.TieBreakers,
-				Signals:     req.Signals,
-				Labels:      req.Labels,
-				Kind:        "waited a delay",
-			}
-			eventHeap.Push(ev)
-			pendingResponse[ev.ID] = envelope
+			schd.handleRequestTypeDelay(envelope)
 		case reqType.AcquireResource != nil:
-			// lookup the resource
-			acquire := reqType.AcquireResource
-			resource, ok := resources[acquire.ResourceID]
-			if !ok {
-				panic("asking to acquire a resource that doesn't exist")
-			}
-			acquired := resource.acquireOrEnqueue(actor)
-			if acquired {
-				// schedule an immediate event
-				eventID++
-				ev := &Event{
-					Actor:       actor,
-					ID:          eventID,
-					Priority:    req.Priority,
-					Time:        currentTime, // right now
-					TieBreakers: req.TieBreakers,
-					Signals:     req.Signals,
-					Labels:      req.Labels,
-					Kind:        "acquired resource immediately",
-				}
-				eventHeap.Push(ev)
-				pendingResponse[ev.ID] = envelope
-				return
-			}
-			// schedule a timeout
-			eventID++
-			timeoutEvent := &Event{
-				Actor:       actor,
-				ID:          eventID,
-				Priority:    req.Priority,
-				Time:        currentTime.Add(acquire.Timeout),
-				TieBreakers: req.TieBreakers,
-				Signals:     req.Signals,
-				Labels:      req.Labels,
-				Kind:        "timed out waiting for resource",
-				Timedout:    true,
-			}
-			eventHeap.Push(timeoutEvent)
-			pendingResponse[timeoutEvent.ID] = envelope
-			// keep the actor waiting, somewhere we can grab it back
-			// when its turns come
-			actorsWaitingForService[actor] = &waitingRequest{
-				envelope: envelope,
-				timeout:  timeoutEvent,
-			}
-
+			schd.handleRequestTypeAcquireResource(envelope)
 		case reqType.ReleaseResource != nil:
-			// lookup the resource
-			release := reqType.ReleaseResource
-			resource, ok := resources[release.ResourceID]
-			if !ok {
-				panic("asking to release a resource that doesn't exist")
-			}
-			// schedule an immediate event to release the resource
-			eventID++
-			ev := &Event{
-				Actor:       actor,
-				ID:          eventID,
-				Priority:    req.Priority,
-				Time:        currentTime, // right now
-				TieBreakers: req.TieBreakers,
-				Signals:     req.Signals,
-				Labels:      req.Labels,
-				Kind:        "released resource",
-			}
-			eventHeap.Push(ev)
-			pendingResponse[ev.ID] = envelope
-			resource.release(actor, func(nextActorInLine string) (stillWaiting bool) {
-				waitingRequest, ok := actorsWaitingForService[nextActorInLine]
-				if !ok {
-					// actor timed out/is gone
-					return false
-				}
-				// remove actor from the waiting list
-				delete(actorsWaitingForService, nextActorInLine)
-				// remove the actor's pending timeout
-				timeoutEvent := waitingRequest.timeout
-				eventHeap.Remove(timeoutEvent)
-				delete(pendingResponse, timeoutEvent.ID)
-
-				// schedule an immediate event to wake up the actor
-				// it has acquired the resource
-				eventID++
-				ev := &Event{
-					Actor:       nextActorInLine,
-					ID:          eventID,
-					Priority:    waitingRequest.envelope.req.Priority,
-					Time:        currentTime, // right now
-					TieBreakers: waitingRequest.envelope.req.TieBreakers,
-					Signals:     waitingRequest.envelope.req.Signals,
-					Labels:      waitingRequest.envelope.req.Labels,
-					Kind:        "acquired resource after waiting",
-				}
-				eventHeap.Push(ev)
-				pendingResponse[ev.ID] = waitingRequest.envelope
-
-				return true
-			})
+			schd.handleRequestTypeReleaseResource(envelope)
 		}
 	}
 
@@ -203,10 +96,10 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 	moreEvents := true
 	for {
 
-		if moreEvents && len(pendingResponse) != actorsRunning {
+		if moreEvents && len(schd.pendingResponse) != actorsRunning {
 			// wait til all actors have made an action
 			var polledCount int
-			for moreEvents && len(pendingResponse) != actorsRunning {
+			for moreEvents && len(schd.pendingResponse) != actorsRunning {
 				env, ok := <-schd.queue
 				if !ok {
 					moreEvents = false
@@ -224,11 +117,11 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 			return history
 		}
 
-		if eventHeap.Len() == 0 {
+		if schd.eventHeap.Len() == 0 {
 			return history
 		}
 
-		nextEvent := eventHeap.Pop()
+		nextEvent := schd.eventHeap.Pop()
 
 		if !end.IsZero() && nextEvent.Time.After(end) {
 			return history
@@ -238,10 +131,14 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 			log.Printf("scheduler: performing next event: %v", nextEvent.Labels)
 		}
 
-		currentTime = nextEvent.Time // advance time
+		schd.currentTime = nextEvent.Time // advance time
+
+		if nextEvent.onHandle != nil {
+			nextEvent.onHandle()
+		}
 
 		if nextEvent.Signals.Has(SignalActorDone) {
-			delete(actorsWaitingForService, nextEvent.Actor)
+			delete(schd.actorsWaitingForService, nextEvent.Actor)
 			actorsRunning--
 		}
 
@@ -250,23 +147,145 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 			Interrupted: nextEvent.Interrupted,
 			Timedout:    nextEvent.Timedout,
 		}
-		pendingResponse[nextEvent.ID].res <- &chanRes{res: res}
+		if pending, ok := schd.pendingResponse[nextEvent.ID]; ok {
+			pending.res <- &chanRes{res: res}
+		}
 
 		// cleanup
-		delete(pendingResponse, nextEvent.ID)
+		delete(schd.pendingResponse, nextEvent.ID)
 
 		history = append(history, nextEvent)
 	}
 }
 
-func (schd *localScheduler) Schedule(req *Request) *Response {
-	envelope := &chanReq{
-		req: req,
-		res: make(chan *chanRes),
+func (schd *localScheduler) newEvent(req *Request, happensAt time.Time, kind string) *Event {
+	schd.eventID++
+	actor := req.Actor
+	return &Event{
+		Actor:       actor,
+		ID:          schd.eventID,
+		Priority:    req.Priority,
+		Time:        happensAt,
+		TieBreakers: req.TieBreakers,
+		Signals:     req.Signals,
+		Labels:      req.Labels,
+		Kind:        kind,
 	}
-	schd.queue <- envelope
-	res := <-envelope.res
-	return res.res
+}
+
+func (schd *localScheduler) handleRequestTypeDone(envelope *chanReq) {
+	req := envelope.req
+	// schedule an immediate "done" event
+	ev := schd.newEvent(req, schd.currentTime, "actor is done")
+	ev.Signals.Set(SignalActorDone)
+	schd.eventHeap.Push(ev)
+	schd.pendingResponse[ev.ID] = envelope
+	return
+}
+
+func (schd *localScheduler) handleRequestTypeDelay(envelope *chanReq) {
+	req := envelope.req
+	reqType := req.Type.Delay
+	// simply schedule an event to wake up
+	ev := schd.newEvent(req, schd.currentTime.Add(reqType.Delay), "waited a delay")
+	schd.eventHeap.Push(ev)
+	schd.pendingResponse[ev.ID] = envelope
+	return
+}
+
+func (schd *localScheduler) handleRequestTypeAcquireResource(envelope *chanReq) {
+	req := envelope.req
+	acquire := req.Type.AcquireResource
+	actor := req.Actor
+	// lookup the resource
+	resource, ok := schd.resources[acquire.ResourceID]
+	if !ok {
+		panic("asking to acquire a resource that doesn't exist")
+	}
+	acquired := resource.acquireOrEnqueue(actor)
+	if acquired {
+		// schedule an immediate event
+		ev := schd.newEvent(req, schd.currentTime, "acquired resource immediately")
+		schd.eventHeap.Push(ev)
+		schd.pendingResponse[ev.ID] = envelope
+		return
+	}
+	// schedule a timeout
+	timeoutEvent := schd.newEvent(req, schd.currentTime.Add(acquire.Timeout), "timed out waiting for resource")
+	timeoutEvent.Timedout = true
+	schd.eventHeap.Push(timeoutEvent)
+	schd.pendingResponse[timeoutEvent.ID] = envelope
+
+	// keep the actor waiting, somewhere we can grab it back
+	// when its turns come
+	schd.actorsWaitingForService[actor] = &waitingRequest{
+		envelope: envelope,
+		timeout:  timeoutEvent,
+		async:    false, // we are actively waiting for the response
+	}
+	return
+}
+
+func (schd *localScheduler) releaseResource(resource Resource, actor string) {
+	resource.release(actor, func(nextActorInLine string) (stillWaiting bool) {
+		waitingRequest, ok := schd.actorsWaitingForService[nextActorInLine]
+		if !ok {
+			// actor timed out/is gone
+			return false
+		}
+		// remove actor from the waiting list
+		delete(schd.actorsWaitingForService, nextActorInLine)
+		// remove the actor's pending timeout
+		timeoutEvent := waitingRequest.timeout
+		schd.eventHeap.Remove(timeoutEvent)
+		delete(schd.pendingResponse, timeoutEvent.ID)
+
+		// schedule an immediate event to wake up the actor
+		// it has acquired the resource
+		ev := schd.newEvent(waitingRequest.envelope.req, schd.currentTime, "acquired resource after waiting")
+
+		schd.eventHeap.Push(ev)
+		if !waitingRequest.async {
+			schd.pendingResponse[ev.ID] = waitingRequest.envelope
+		}
+		return true
+	})
+}
+
+func (schd *localScheduler) handleRequestTypeReleaseResource(envelope *chanReq) {
+	req := envelope.req
+	release := req.Type.ReleaseResource
+	actor := req.Actor
+	// lookup the resource
+	resource, ok := schd.resources[release.ResourceID]
+	if !ok {
+		panic("asking to release a resource that doesn't exist")
+	}
+
+	if req.Async {
+		// schedule an event in the future to release the resource
+		ev := schd.newEvent(req, schd.currentTime.Add(req.AsyncDelay), "released resource async")
+		// trigger the release when the event occurs
+		ev.onHandle = func() {
+			schd.releaseResource(resource, actor)
+		}
+		schd.eventHeap.Push(ev)
+		// return control immediately
+		envelope.res <- &chanRes{
+			res: &Response{Now: schd.currentTime},
+		}
+		return
+	}
+
+	// schedule an immediate event to release the resource
+	ev := schd.newEvent(req, schd.currentTime, "released resource")
+	ev.onHandle = func() {
+		schd.releaseResource(resource, actor)
+	}
+	schd.eventHeap.Push(ev)
+	schd.pendingResponse[ev.ID] = envelope
+
+	return
 }
 
 type chanReq struct {

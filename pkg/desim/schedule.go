@@ -21,6 +21,9 @@ type Request struct {
 	TieBreakers [4]int32
 	Labels      map[string]string
 	Type        *RequestType
+
+	Async      bool
+	AsyncDelay time.Duration
 }
 
 type RequestType struct {
@@ -65,6 +68,8 @@ type Event struct {
 	Kind        string
 	Interrupted bool
 	Timedout    bool
+
+	onHandle func()
 }
 
 func (e *Event) compare(other *Event) int {
