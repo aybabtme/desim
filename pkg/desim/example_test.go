@@ -206,6 +206,133 @@ func ExampleResourceTimeout() {
 	// 1970-01-01 00:00:00.1 +0000 UTC: actor is done
 }
 
+func ExampleAsyncResourceUsage() {
+	var (
+		r     = rand.New(rand.NewSource(42))
+		start = time.Unix(0, 0).UTC()
+		end   = start.Add(500 * time.Millisecond)
+	)
+
+	sim := desim.New(
+		desim.NewLocalScheduler,
+		r,
+		gen.StaticTime(start),
+		gen.StaticTime(end),
+	)
+
+	pool := desim.MakeFIFOResource("pool", 1)
+
+	var (
+		requestAt  time.Time
+		obtainedAt time.Time
+	)
+
+	raceForPool := func(env desim.Env) bool {
+
+		useFor := gen.StaticDuration(100 * time.Millisecond)
+		timeoutAfter := gen.StaticDuration(time.Second)
+
+		requestAt = env.Now()
+		obtained := env.UseAsync(pool, useFor, timeoutAfter)
+		if !obtained {
+			env.Log().Event("timed out waiting to use pool")
+			return false
+		}
+		obtainedAt = env.Now()
+		return false
+	}
+
+	racer1 := desim.MakeActor("racer1", raceForPool)
+
+	evs := sim.Run(
+		[]*desim.Actor{
+			racer1,
+		},
+		[]desim.Resource{pool},
+		desim.LogJSON(ioutil.Discard),
+	)
+	fmt.Printf("requested at %v\n", requestAt)
+	fmt.Printf("obtained at %v\n", obtainedAt)
+	for _, ev := range evs {
+		fmt.Printf("%v: %s\n", ev.Time, ev.Kind)
+	}
+
+	// Output:
+	// requested at 1970-01-01 00:00:00 +0000 UTC
+	// obtained at 1970-01-01 00:00:00 +0000 UTC
+	// 1970-01-01 00:00:00 +0000 UTC: acquired resource immediately
+	// 1970-01-01 00:00:00 +0000 UTC: actor is done
+	// 1970-01-01 00:00:00.1 +0000 UTC: released resource async
+}
+
+func ExampleAsyncAndSyncResourceUsage() {
+	var (
+		r     = rand.New(rand.NewSource(42))
+		start = time.Unix(0, 0).UTC()
+		end   = start.Add(500 * time.Millisecond)
+	)
+
+	sim := desim.New(
+		desim.NewLocalScheduler,
+		r,
+		gen.StaticTime(start),
+		gen.StaticTime(end),
+	)
+
+	useFor := gen.StaticDuration(100 * time.Millisecond)
+	syncUserStartDelay := gen.StaticDuration(10 * time.Millisecond)
+	timeoutAfter := gen.StaticDuration(time.Second)
+
+	pool := desim.MakeFIFOResource("pool", 1)
+
+	asyncUser := func(env desim.Env) bool {
+		obtained := env.UseAsync(pool, useFor, timeoutAfter)
+		if !obtained {
+			env.Log().Event("timed out waiting to use pool")
+			return false
+		}
+		return false
+	}
+
+	syncUser := func(env desim.Env) bool {
+		if interrupted := env.Sleep(syncUserStartDelay); interrupted {
+			panic("shouldn't be interrupted")
+		}
+		release, obtained := env.Acquire(pool, timeoutAfter)
+		if !obtained {
+			env.Log().Event("timed out waiting to use pool")
+			return false
+		}
+		if interrupted := env.Sleep(useFor); interrupted {
+			panic("shouldn't be interrupted")
+		}
+		release()
+		return false
+	}
+
+	evs := sim.Run(
+		[]*desim.Actor{
+			desim.MakeActor("async-user", asyncUser),
+			desim.MakeActor("sync-user", syncUser),
+		},
+		[]desim.Resource{pool},
+		desim.LogJSON(ioutil.Discard),
+	)
+	for _, ev := range evs {
+		fmt.Printf("%v: %s - %s\n", ev.Time, ev.Actor, ev.Kind)
+	}
+
+	// Output:
+	// 1970-01-01 00:00:00 +0000 UTC: async-user - acquired resource immediately
+	// 1970-01-01 00:00:00 +0000 UTC: async-user - actor is done
+	// 1970-01-01 00:00:00.01 +0000 UTC: sync-user - waited a delay
+	// 1970-01-01 00:00:00.1 +0000 UTC: async-user - released resource async
+	// 1970-01-01 00:00:00.1 +0000 UTC: sync-user - acquired resource after waiting
+	// 1970-01-01 00:00:00.2 +0000 UTC: sync-user - waited a delay
+	// 1970-01-01 00:00:00.2 +0000 UTC: sync-user - released resource
+	// 1970-01-01 00:00:00.2 +0000 UTC: sync-user - actor is done
+}
+
 func clock(iter int, dur time.Duration) desim.Action {
 	pdur := gen.StaticDuration(dur)
 	return func(env desim.Env) bool {

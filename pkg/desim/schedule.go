@@ -21,6 +21,9 @@ type Request struct {
 	TieBreakers [4]int32
 	Labels      map[string]string
 	Type        *RequestType
+
+	Async      bool
+	AsyncDelay time.Duration
 }
 
 type RequestType struct {
@@ -29,7 +32,6 @@ type RequestType struct {
 	Delay           *RequestDelay
 	AcquireResource *RequestAcquireResource
 	ReleaseResource *RequestReleaseResource
-	UseResource     *RequestUseResource
 }
 
 type RequestDone struct{}
@@ -45,12 +47,6 @@ type RequestAcquireResource struct {
 
 type RequestReleaseResource struct {
 	ResourceID string
-}
-
-type RequestUseResource struct {
-	ResourceID string
-	Duration   time.Duration
-	Timeout    time.Duration
 }
 
 type Response struct {

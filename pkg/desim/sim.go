@@ -127,7 +127,7 @@ func (env *env) IsRunning() bool  { return !env.aborted || !env.stopped }
 func (env *env) Sleep(d gen.Duration) (interrupted bool) {
 	resp := env.send(0, &RequestType{
 		Delay: &RequestDelay{Delay: d.Gen()},
-	})
+	}, false, 0)
 	return resp.Interrupted
 }
 
@@ -135,14 +135,14 @@ func (env *env) Abort(d gen.Duration) {
 	env.aborted = true
 	_ = env.send(SignalAbort, &RequestType{
 		Delay: &RequestDelay{Delay: d.Gen()},
-	})
+	}, false, 0)
 }
 
 func (env *env) Done(d gen.Duration) {
 	env.stopped = true
 	_ = env.send(SignalActorDone, &RequestType{
 		Done: &RequestDone{},
-	})
+	}, false, 0)
 }
 
 func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), obtained bool) {
@@ -151,7 +151,7 @@ func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), obt
 			ResourceID: res.id(),
 			Timeout:    timeout.Gen(),
 		},
-	})
+	}, false, 0)
 	if resp.Timedout {
 		return nil, false
 	}
@@ -160,7 +160,7 @@ func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), obt
 			ReleaseResource: &RequestReleaseResource{
 				ResourceID: res.id(),
 			},
-		})
+		}, false, 0)
 	}
 
 	return releaseFn, true
@@ -168,22 +168,27 @@ func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), obt
 
 func (env *env) UseAsync(res Resource, duration, timeout gen.Duration) (obtained bool) {
 	resp := env.send(0, &RequestType{
-		UseResource: &RequestUseResource{
+		AcquireResource: &RequestAcquireResource{
 			ResourceID: res.id(),
-			Duration:   duration.Gen(),
 			Timeout:    timeout.Gen(),
 		},
-	})
+	}, false, 0)
 	if resp.Timedout {
 		return false
 	}
+	// we don't wait
+	_ = env.send(0, &RequestType{
+		ReleaseResource: &RequestReleaseResource{
+			ResourceID: res.id(),
+		},
+	}, true, duration.Gen())
 
 	return true
 }
 
 var stopAllActors = struct{}{}
 
-func (env *env) send(sig Signal, reqType *RequestType) *Response {
+func (env *env) send(sig Signal, reqType *RequestType, async bool, asyncDelay time.Duration) *Response {
 	if D {
 		log.Printf("%q: sending an event", env.actorName)
 	}
@@ -197,8 +202,10 @@ func (env *env) send(sig Signal, reqType *RequestType) *Response {
 			env.r.Int31(),
 			env.r.Int31(),
 		},
-		Signals: sig,
-		Labels:  map[string]string{"name": env.actorName},
+		Signals:    sig,
+		Labels:     map[string]string{"name": env.actorName},
+		Async:      async,
+		AsyncDelay: asyncDelay,
 	})
 	env.now = resp.Now
 	if resp.Done {
