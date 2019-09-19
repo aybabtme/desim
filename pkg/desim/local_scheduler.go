@@ -143,9 +143,10 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 		}
 
 		res := &Response{
-			Now:         nextEvent.Time,
-			Interrupted: nextEvent.Interrupted,
-			Timedout:    nextEvent.Timedout,
+			Now:            nextEvent.Time,
+			Interrupted:    nextEvent.Interrupted,
+			Timedout:       nextEvent.Timedout,
+			ReservationKey: nextEvent.ReservationKey,
 		}
 		if pending, ok := schd.pendingResponse[nextEvent.ID]; ok {
 			pending.res <- &chanRes{res: res}
@@ -202,11 +203,12 @@ func (schd *localScheduler) handleRequestTypeAcquireResource(envelope *chanReq) 
 	if !ok {
 		panic("asking to acquire a resource that doesn't exist")
 	}
-	acquired := resource.acquireOrEnqueue(actor)
-	if acquired {
+	reservation := resource.acquireOrEnqueue(actor)
+	if reservation != nil {
 		// schedule an immediate event
 		ev := schd.newEvent(req, schd.currentTime, "acquired resource immediately")
 		schd.eventHeap.Push(ev)
+		ev.ReservationKey = string(reservation.key())
 		schd.pendingResponse[ev.ID] = envelope
 		return
 	}
@@ -226,15 +228,15 @@ func (schd *localScheduler) handleRequestTypeAcquireResource(envelope *chanReq) 
 	return
 }
 
-func (schd *localScheduler) releaseResource(resource Resource, actor string) {
-	resource.release(actor, func(nextActorInLine string) (stillWaiting bool) {
-		waitingRequest, ok := schd.actorsWaitingForService[nextActorInLine]
+func (schd *localScheduler) releaseResource(resource Resource, resKey reservationKey) {
+	resource.release(resKey, func(nextReservationInLine *reservation) (stillWaiting bool) {
+		waitingRequest, ok := schd.actorsWaitingForService[nextReservationInLine.actor]
 		if !ok {
 			// actor timed out/is gone
 			return false
 		}
 		// remove actor from the waiting list
-		delete(schd.actorsWaitingForService, nextActorInLine)
+		delete(schd.actorsWaitingForService, nextReservationInLine.actor)
 		// remove the actor's pending timeout
 		timeoutEvent := waitingRequest.timeout
 		schd.eventHeap.Remove(timeoutEvent)
@@ -243,7 +245,7 @@ func (schd *localScheduler) releaseResource(resource Resource, actor string) {
 		// schedule an immediate event to wake up the actor
 		// it has acquired the resource
 		ev := schd.newEvent(waitingRequest.envelope.req, schd.currentTime, "acquired resource after waiting")
-
+		ev.ReservationKey = string(nextReservationInLine.key())
 		schd.eventHeap.Push(ev)
 		if !waitingRequest.async {
 			schd.pendingResponse[ev.ID] = waitingRequest.envelope
@@ -255,7 +257,7 @@ func (schd *localScheduler) releaseResource(resource Resource, actor string) {
 func (schd *localScheduler) handleRequestTypeReleaseResource(envelope *chanReq) {
 	req := envelope.req
 	release := req.Type.ReleaseResource
-	actor := req.Actor
+
 	// lookup the resource
 	resource, ok := schd.resources[release.ResourceID]
 	if !ok {
@@ -267,20 +269,21 @@ func (schd *localScheduler) handleRequestTypeReleaseResource(envelope *chanReq) 
 		ev := schd.newEvent(req, schd.currentTime.Add(req.AsyncDelay), "released resource async")
 		// trigger the release when the event occurs
 		ev.onHandle = func() {
-			schd.releaseResource(resource, actor)
+			schd.releaseResource(resource, reservationKey(release.ReservationKey))
 		}
 		schd.eventHeap.Push(ev)
 		// return control immediately
 		envelope.res <- &chanRes{
 			res: &Response{Now: schd.currentTime},
 		}
+		// schd.pendingResponse[ev.ID] = envelope
 		return
 	}
 
 	// schedule an immediate event to release the resource
 	ev := schd.newEvent(req, schd.currentTime, "released resource")
 	ev.onHandle = func() {
-		schd.releaseResource(resource, actor)
+		schd.releaseResource(resource, reservationKey(release.ReservationKey))
 	}
 	schd.eventHeap.Push(ev)
 	schd.pendingResponse[ev.ID] = envelope

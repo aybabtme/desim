@@ -333,6 +333,83 @@ func ExampleAsyncAndSyncResourceUsage() {
 	// 1970-01-01 00:00:00.2 +0000 UTC: sync-user - actor is done
 }
 
+func ExampleAsyncReentrantUsage() {
+	var (
+		r     = rand.New(rand.NewSource(42))
+		start = time.Unix(0, 0).UTC()
+		end   = start.Add(500 * time.Millisecond)
+	)
+
+	sim := desim.New(
+		desim.NewLocalScheduler,
+		r,
+		gen.StaticTime(start),
+		gen.StaticTime(end),
+	)
+
+	useFor := gen.StaticDuration(100 * time.Millisecond)
+	timeoutAfter := gen.StaticDuration(time.Second)
+
+	pool := desim.MakeFIFOResource("pool", 2)
+
+	var (
+		firstJob  time.Time
+		secondJob time.Time
+		thirdJob  time.Time
+	)
+
+	user := func(env desim.Env) bool {
+		// send one task to the pool
+		obtained := env.UseAsync(pool, useFor, timeoutAfter)
+		if !obtained {
+			env.Log().Event("timed out waiting to use pool")
+			return false
+		}
+		firstJob = env.Now()
+		// send another one immediately
+		obtained = env.UseAsync(pool, useFor, timeoutAfter)
+		if !obtained {
+			env.Log().Event("timed out waiting to use pool")
+			return false
+		}
+		secondJob = env.Now()
+		// then wait a bit to send the final job
+		obtained = env.UseAsync(pool, useFor, timeoutAfter)
+		if !obtained {
+			env.Log().Event("timed out waiting to use pool")
+			return false
+		}
+		thirdJob = env.Now()
+		return false
+	}
+
+	evs := sim.Run(
+		[]*desim.Actor{
+			desim.MakeActor("user", user),
+		},
+		[]desim.Resource{pool},
+		desim.LogJSON(ioutil.Discard),
+	)
+	fmt.Printf("first job sent at %v\n", firstJob)
+	fmt.Printf("second job sent at %v\n", secondJob)
+	fmt.Printf("third job sent at %v\n", thirdJob)
+	for _, ev := range evs {
+		fmt.Printf("%v: %s - %s\n", ev.Time, ev.Actor, ev.Kind)
+	}
+
+	// Output:
+	// first job sent at 1970-01-01 00:00:00 +0000 UTC
+	// second job sent at 1970-01-01 00:00:00 +0000 UTC
+	// third job sent at 1970-01-01 00:00:00.1 +0000 UTC
+	// 1970-01-01 00:00:00 +0000 UTC: user - acquired resource immediately
+	// 1970-01-01 00:00:00 +0000 UTC: user - acquired resource immediately
+	// 1970-01-01 00:00:00.1 +0000 UTC: user - released resource async
+	// 1970-01-01 00:00:00.1 +0000 UTC: user - released resource async
+	// 1970-01-01 00:00:00.1 +0000 UTC: user - acquired resource after waiting
+	// 1970-01-01 00:00:00.1 +0000 UTC: user - actor is done
+	// 1970-01-01 00:00:00.2 +0000 UTC: user - released resource async
+}
+
 func clock(iter int, dur time.Duration) desim.Action {
 	pdur := gen.StaticDuration(dur)
 	return func(env desim.Env) bool {

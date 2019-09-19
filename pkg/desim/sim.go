@@ -155,12 +155,14 @@ func (env *env) Acquire(res Resource, timeout gen.Duration) (release func(), obt
 	if resp.Timedout {
 		return nil, false
 	}
+	releaseReq := &RequestType{
+		ReleaseResource: &RequestReleaseResource{
+			ResourceID:     res.id(),
+			ReservationKey: resp.ReservationKey,
+		},
+	}
 	releaseFn := func() {
-		_ = env.send(0, &RequestType{
-			ReleaseResource: &RequestReleaseResource{
-				ResourceID: res.id(),
-			},
-		}, false, 0)
+		_ = env.send(0, releaseReq, false, 0)
 	}
 
 	return releaseFn, true
@@ -179,7 +181,8 @@ func (env *env) UseAsync(res Resource, duration, timeout gen.Duration) (obtained
 	// we don't wait
 	_ = env.send(0, &RequestType{
 		ReleaseResource: &RequestReleaseResource{
-			ResourceID: res.id(),
+			ResourceID:     res.id(),
+			ReservationKey: resp.ReservationKey,
 		},
 	}, true, duration.Gen())
 
