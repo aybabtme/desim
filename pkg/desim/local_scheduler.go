@@ -3,6 +3,7 @@ package desim
 import (
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,8 @@ type localScheduler struct {
 	actorCount int
 	resources  map[string]Resource
 	queue      chan *chanReq
+	abortMu    sync.Mutex
+	abortRes   *Response
 
 	currentTime             time.Time
 	eventID                 int
@@ -48,6 +51,12 @@ type localScheduler struct {
 }
 
 func (schd *localScheduler) Schedule(req *Request) *Response {
+	schd.abortMu.Lock()
+	aborted := schd.abortRes
+	schd.abortMu.Unlock()
+	if aborted != nil {
+		return aborted
+	}
 	envelope := &chanReq{
 		req: req,
 		res: make(chan *chanRes),
@@ -81,6 +90,8 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 		req := envelope.req
 		reqType := req.Type
 		switch {
+		case reqType.Abort != nil:
+			schd.handleRequestTypeAbort(envelope)
 		case reqType.Done != nil:
 			schd.handleRequestTypeDone(envelope)
 		case reqType.Delay != nil:
@@ -94,6 +105,34 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 
 	var history []*Event
 	moreEvents := true
+	aborted := false
+	var abortedRes *Response
+	abortNow := func(nextEvent *Event) {
+		aborted = true
+		abortedRes = &Response{
+			Now:         nextEvent.Time,
+			Interrupted: true,
+			Done:        true,
+		}
+		schd.abortMu.Lock()
+		schd.abortRes = abortedRes
+		schd.abortMu.Unlock()
+	}
+	defer func() {
+		if aborted {
+		drainloop:
+			for {
+				select {
+				case env := <-schd.queue:
+					env.res <- &chanRes{res: abortedRes}
+				default:
+					break drainloop
+				}
+			}
+			close(schd.queue)
+		}
+	}()
+
 	for {
 
 		if moreEvents && len(schd.pendingResponse) != actorsRunning {
@@ -124,6 +163,7 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 		nextEvent := schd.eventHeap.Pop()
 
 		if !end.IsZero() && nextEvent.Time.After(end) {
+			abortNow(nextEvent)
 			return history
 		}
 
@@ -142,11 +182,21 @@ func (schd *localScheduler) Run(r *rand.Rand, start, end time.Time) []*Event {
 			actorsRunning--
 		}
 
-		res := &Response{
-			Now:            nextEvent.Time,
-			Interrupted:    nextEvent.Interrupted,
-			Timedout:       nextEvent.Timedout,
-			ReservationKey: nextEvent.ReservationKey,
+		if nextEvent.Signals.Has(SignalAbort) {
+			abortNow(nextEvent)
+		}
+		var res *Response
+		if aborted {
+			res = abortedRes
+			delete(schd.actorsWaitingForService, nextEvent.Actor)
+			actorsRunning--
+		} else {
+			res = &Response{
+				Now:            nextEvent.Time,
+				Interrupted:    nextEvent.Interrupted,
+				Timedout:       nextEvent.Timedout,
+				ReservationKey: nextEvent.ReservationKey,
+			}
 		}
 		if pending, ok := schd.pendingResponse[nextEvent.ID]; ok {
 			pending.res <- &chanRes{res: res}
@@ -174,14 +224,22 @@ func (schd *localScheduler) newEvent(req *Request, happensAt time.Time, kind str
 	}
 }
 
+func (schd *localScheduler) handleRequestTypeAbort(envelope *chanReq) {
+	req := envelope.req
+	// schedule an immediate "abort" event
+	ev := schd.newEvent(req, schd.currentTime, "actor is aborting simulation")
+	ev.Signals = ev.Signals.Set(SignalAbort)
+	schd.eventHeap.Push(ev)
+	schd.pendingResponse[ev.ID] = envelope
+}
+
 func (schd *localScheduler) handleRequestTypeDone(envelope *chanReq) {
 	req := envelope.req
 	// schedule an immediate "done" event
 	ev := schd.newEvent(req, schd.currentTime, "actor is done")
-	ev.Signals.Set(SignalActorDone)
+	ev.Signals = ev.Signals.Set(SignalActorDone)
 	schd.eventHeap.Push(ev)
 	schd.pendingResponse[ev.ID] = envelope
-	return
 }
 
 func (schd *localScheduler) handleRequestTypeDelay(envelope *chanReq) {
@@ -191,7 +249,6 @@ func (schd *localScheduler) handleRequestTypeDelay(envelope *chanReq) {
 	ev := schd.newEvent(req, schd.currentTime.Add(reqType.Delay), "waited a delay")
 	schd.eventHeap.Push(ev)
 	schd.pendingResponse[ev.ID] = envelope
-	return
 }
 
 func (schd *localScheduler) handleRequestTypeAcquireResource(envelope *chanReq) {
@@ -201,7 +258,7 @@ func (schd *localScheduler) handleRequestTypeAcquireResource(envelope *chanReq) 
 	// lookup the resource
 	resource, ok := schd.resources[acquire.ResourceID]
 	if !ok {
-		panic("asking to acquire a resource that doesn't exist")
+		panic("asking to acquire a resource that doesn't exist: " + acquire.ResourceID)
 	}
 	reservation := resource.acquireOrEnqueue(actor)
 	if reservation != nil {

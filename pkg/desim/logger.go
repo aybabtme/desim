@@ -2,6 +2,7 @@ package desim
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"strconv"
 	"sync"
@@ -86,6 +87,22 @@ func (log *kvlogger) KV(k, v string) Logger {
 	}
 }
 
+func (log *kvlogger) KVi(k string, v int) Logger {
+	return &kvlogger{
+		encoder: log.encoder,
+		keys:    append(log.keys, k),
+		values:  append(log.values, strconv.Itoa(v)),
+	}
+}
+
+func (log *kvlogger) KVf(k string, v float64) Logger {
+	return &kvlogger{
+		encoder: log.encoder,
+		keys:    append(log.keys, k),
+		values:  append(log.values, fmt.Sprintf("%f", v)),
+	}
+}
+
 func (log kvlogger) Event(msg string) {
 	log.encoder(
 		append(log.keys, "event"),
@@ -95,5 +112,7 @@ func (log kvlogger) Event(msg string) {
 
 type mutelogger uint8
 
-func (l mutelogger) KV(_, _ string) Logger { return l }
-func (mutelogger) Event(_ string)          {}
+func (l mutelogger) KV(_, _ string) Logger          { return l }
+func (l mutelogger) KVi(_ string, _ int) Logger     { return l }
+func (l mutelogger) KVf(_ string, _ float64) Logger { return l }
+func (mutelogger) Event(_ string)                   {}

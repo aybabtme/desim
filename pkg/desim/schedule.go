@@ -28,11 +28,14 @@ type Request struct {
 
 type RequestType struct {
 	// oneof
+	Abort           *RequestAbort
 	Done            *RequestDone
 	Delay           *RequestDelay
 	AcquireResource *RequestAcquireResource
 	ReleaseResource *RequestReleaseResource
 }
+
+type RequestAbort struct{}
 
 type RequestDone struct{}
 
@@ -93,7 +96,7 @@ func (e *Event) compare(other *Event) int {
 	if e.Actor < other.Actor {
 		return 1
 	}
-	if e.Actor > e.Actor {
+	if e.Actor > other.Actor {
 		return -1
 	}
 	if e.ID < other.ID {

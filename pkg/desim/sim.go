@@ -37,7 +37,7 @@ type Env interface {
 	IsRunning() bool
 
 	Sleep(gen.Duration) (interrupted bool)
-	Abort(gen.Duration)
+	Abort()
 	Done(gen.Duration)
 
 	Acquire(res Resource, timeout gen.Duration) (release func(), obtained bool)
@@ -48,6 +48,8 @@ type Env interface {
 
 type Logger interface {
 	KV(string, string) Logger
+	KVi(string, int) Logger
+	KVf(string, float64) Logger
 	Event(string)
 }
 
@@ -131,10 +133,11 @@ func (env *env) Sleep(d gen.Duration) (interrupted bool) {
 	return resp.Interrupted
 }
 
-func (env *env) Abort(d gen.Duration) {
+func (env *env) Abort() {
+	env.stopped = true
 	env.aborted = true
 	_ = env.send(SignalAbort, &RequestType{
-		Delay: &RequestDelay{Delay: d.Gen()},
+		Abort: &RequestAbort{},
 	}, false, 0)
 }
 
